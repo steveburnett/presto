@@ -21,6 +21,7 @@ Release 0.292
 * Add support for Iceberg table sort orders. Tables can be created to add a list of `sorted_by` columns which will be used to order files written to the table. `#21977 <https://github.com/prestodb/presto/pull/21977>`_
 * Add support for ``UPDATE`` SQL statements. `#24281 <https://github.com/prestodb/presto/pull/24281>`_
 * Add configuration property ``tpcds.use-varchar-type`` to allow toggling of char columns to varchar columns. `#24406 <https://github.com/prestodb/presto/pull/24406>`_
+* Add something. 
 
 **Details**
 ===========
