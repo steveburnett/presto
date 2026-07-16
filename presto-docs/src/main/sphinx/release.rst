@@ -2,6 +2,8 @@
 Release Notes
 *************
 
+This is just to test the CI check for PR titles.  
+
 .. toctree::
     :maxdepth: 1
 
