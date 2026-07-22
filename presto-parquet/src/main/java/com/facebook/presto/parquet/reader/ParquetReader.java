@@ -35,9 +35,12 @@ import com.facebook.presto.parquet.ParquetDataSource;
 import com.facebook.presto.parquet.ParquetResultVerifierUtils;
 import com.facebook.presto.parquet.PrimitiveField;
 import com.facebook.presto.parquet.RichColumnDescriptor;
+import com.facebook.presto.parquet.VariantField;
 import com.facebook.presto.parquet.predicate.Predicate;
 import com.facebook.presto.parquet.predicate.TupleDomainParquetPredicate;
 import com.facebook.presto.parquet.reader.ColumnIndexFilterUtils.OffsetRange;
+import com.facebook.presto.parquet.spark.Variant;
+import io.airlift.slice.Slice;
 import it.unimi.dsi.fastutil.booleans.BooleanArrayList;
 import it.unimi.dsi.fastutil.booleans.BooleanList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
@@ -64,6 +67,8 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.SequenceInputStream;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -81,10 +86,13 @@ import static com.facebook.presto.common.type.StandardTypes.ARRAY;
 import static com.facebook.presto.common.type.StandardTypes.MAP;
 import static com.facebook.presto.common.type.StandardTypes.ROW;
 import static com.facebook.presto.common.type.TinyintType.TINYINT;
+import static com.facebook.presto.common.type.VarbinaryType.VARBINARY;
+import static com.facebook.presto.common.type.VarcharType.VARCHAR;
 import static com.facebook.presto.parquet.ParquetValidationUtils.validateParquet;
 import static com.facebook.presto.parquet.reader.ListColumnReader.calculateCollectionOffsets;
 import static com.google.common.base.Preconditions.checkArgument;
 import static io.airlift.slice.SizeOf.sizeOf;
+import static io.airlift.slice.Slices.utf8Slice;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.lang.Math.toIntExact;
@@ -537,11 +545,39 @@ public class ParquetReader
         return readColumnChunk(field).getBlock();
     }
 
+    private ColumnChunk readVariant(VariantField field)
+            throws IOException
+    {
+        ColumnChunk valueChunk = readColumnChunk(field.getValue());
+        int positionCount = valueChunk.getBlock().getPositionCount();
+
+        BlockBuilder variantBlock = VARCHAR.createBlockBuilder(null, positionCount);
+        if (positionCount > 0) {
+            ColumnChunk metadataChunk = readColumnChunk(field.getMetadata());
+            ZoneId zoneId = ZoneOffset.UTC;
+            for (int i = 0; i < valueChunk.getBlock().getPositionCount(); i++) {
+                if (valueChunk.getBlock().isNull(i) || metadataChunk.getBlock().isNull(i)) {
+                    variantBlock.appendNull();
+                }
+                else {
+                    Slice value = VARBINARY.getSlice(valueChunk.getBlock(), i);
+                    Slice metadata = VARBINARY.getSlice(metadataChunk.getBlock(), i);
+                    Variant variant = new Variant(value.byteArray(), metadata.byteArray());
+                    VARCHAR.writeSlice(variantBlock, utf8Slice(variant.toJson(zoneId)));
+                }
+            }
+        }
+        return new ColumnChunk(variantBlock.build(), valueChunk.getDefinitionLevels(), valueChunk.getRepetitionLevels());
+    }
+
     private ColumnChunk readColumnChunk(Field field)
             throws IOException
     {
         ColumnChunk columnChunk;
-        if (ROW.equals(field.getType().getTypeSignature().getBase())) {
+        if (field instanceof VariantField) {
+            columnChunk = readVariant((VariantField) field);
+        }
+        else if (ROW.equals(field.getType().getTypeSignature().getBase())) {
             columnChunk = readStruct((GroupField) field);
         }
         else if (MAP.equals(field.getType().getTypeSignature().getBase())) {
